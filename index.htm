@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MPD Records — City of Minneapolis</title>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <!-- ============================================================
+       SELF-HEALING CONFIGURATION
+       Adjust timing constants here only — do not edit script logic.
+       ============================================================ -->
+  <script>
+    const KIOSK_HOME_URL   = window.location.href;
+    const IDLE_WARN_MS     = 90000;   // 1.5 min  → show warning overlay
+    const IDLE_RELOAD_MS   = 120000;  // 2 min    → hard reload to home
+    const HEALTH_CHECK_MS  = 60000;   // 1 min    → periodic connectivity ping
+    const HEALTH_CHECK_URL = 'https://www.minneapolismn.gov/';
+  </script>
+
+  <style>
+    /* ============================================================
+       BRAND TOKENS
+       Base: City of Minneapolis
+       Overlay: MPD law enforcement palette (deep navy + gold)
+       ============================================================ */
+    :root {
+      /* City of Minneapolis base */
+      --blue-city:      #1e6fa8;
+      --blue-link:      #1a6faf;
+      --green-icon:     #8a9a1e;
+      --green-icon-lt:  #a2b427;
+      --gray-utility:   #2d2d2d;
+      --gray-divider:   #d0ccc8;
+      --gray-section:   #eceff1;
+      --gray-body:      #4a4a4a;
+      --gray-meta:      #717171;
+      --white:          #ffffff;
+
+      /* MPD law enforcement palette */
+      --navy:           #0d2347;   /* deep midnight navy — header       */
+      --navy-mid:       #152d5a;   /* mid navy — card hover border      */
+      --gold:           #b8962e;   /* badge gold — accents & hover      */
+      --gold-lt:        #d4ae45;   /* lighter gold — gradient stop      */
+      --gold-pale:      #fdf6e3;   /* very pale gold — card bg hover    */
+
+      --font-ui: 'Myriad Pro', Calibri, 'Trebuchet MS', Arial, sans-serif;
+    }
+
+    /* ============================================================
+       RESET & BASE
+       ============================================================ */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; height: 100%; }
+    body {
+      font-family: var(--font-ui);
+      color: var(--gray-body);
+      background-color: var(--white);
+      -webkit-user-select: none;
+      user-select: none;
+      overflow-x: hidden;
+      overflow-y: auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+    /* ============================================================
+       IDLE WARNING OVERLAY
+       ============================================================ */
+    #idle-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75); z-index: 9999;
+      align-items: center; justify-content: center;
+    }
+    #idle-overlay.visible { display: flex; }
+    #idle-box {
+      background: var(--white); border-radius: 14px; padding: 52px 60px;
+      text-align: center; max-width: 520px; width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      border-top: 5px solid var(--gold);
+    }
+    #idle-box i     { font-size: 56px; color: var(--gold); display: block; margin-bottom: 20px; }
+    #idle-box h2    { font-size: 28px; color: var(--navy); margin-bottom: 10px; }
+    #idle-box p     { font-size: 17px; color: var(--gray-meta); line-height: 1.55; margin-bottom: 24px; }
+    #idle-countdown { font-size: 60px; font-weight: 700; color: var(--navy); line-height: 1; margin-bottom: 28px; }
+    #idle-stay {
+      background-color: var(--navy); color: var(--white); border: none;
+      padding: 16px 44px; border-radius: 6px; font-size: 20px;
+      font-family: var(--font-ui); font-weight: 600; cursor: pointer;
+      transition: background-color 0.18s;
+    }
+    #idle-stay:hover { background-color: var(--navy-mid); }
+
+    /* ============================================================
+       OFFLINE BANNER
+       ============================================================ */
+    #offline-banner {
+      display: none; position: fixed; top: 0; left: 0; right: 0;
+      background-color: #c0392b; color: var(--white); text-align: center;
+      padding: 13px 20px; font-size: 16px; font-weight: 600;
+      z-index: 9998; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }
+    #offline-banner.visible { display: block; }
+
+    /* ============================================================
+       SITE HEADER
+       Deep navy — authoritative law enforcement feel.
+       Gold bottom accent stripe ties the badge palette together.
+       ============================================================ */
+    .site-header {
+      background-color: var(--navy);
+      display: flex;
+      align-items: center;
+      padding: 0 48px;
+      gap: 28px;
+      min-height: 96px;
+      flex-shrink: 0;
+      border-bottom: 4px solid var(--gold);
+      box-shadow: 0 3px 16px rgba(0,0,0,0.30);
+    }
+
+    /* City of Minneapolis logo — left anchor */
+    .header-logo-wrap {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding-right: 28px;
+      border-right: 1px solid rgba(255,255,255,0.18);
+    }
+    .header-logo-wrap img {
+      height: 62px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    /* Center: kiosk title */
+    .header-title-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .header-title-wrap h1 {
+      color: var(--white);
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1.2;
+      margin-bottom: 4px;
+      letter-spacing: 0.01em;
+    }
+    .header-title-wrap p {
+      color: rgba(255,255,255,0.70);
+      font-size: 15px;
+      font-weight: 400;
+    }
+
+    /* Right: MPD badge — decorative header badge */
+    .header-badge-wrap {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding-left: 28px;
+      border-left: 1px solid rgba(255,255,255,0.18);
+    }
+    .header-badge-img {
+      height: 70px;
+      width: auto;
+      object-fit: contain;
+      opacity: 0.90;
+      /* If badge image not available, hide gracefully */
+    }
+    /* Fallback badge rendered in CSS if image is missing */
+    .header-badge-fallback {
+      display: none; /* shown via JS onerror */
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      border: 2px solid rgba(184,150,46,0.6);
+      background: rgba(184,150,46,0.12);
+      align-items: center;
+      justify-content: center;
+      color: var(--gold-lt);
+      font-size: 30px;
+    }
+
+    /* ============================================================
+       MAIN CONTENT AREA
+       White with MPD badge watermark behind the cards.
+       ============================================================ */
+    .main-content {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 60px 52px;
+      overflow: hidden;
+    }
+
+    /* MPD Badge watermark — large, centered, very low opacity */
+    .main-content::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 640px;
+      height: 640px;
+      background-image: url('mpdbadge.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      opacity: 0.055;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* All direct children of main sit above the watermark */
+    .main-content > * { position: relative; z-index: 1; }
+
+    /* ============================================================
+       PAGE INTRO
+       ============================================================ */
+    .page-intro {
+      text-align: center;
+      max-width: 760px;
+      margin-bottom: 44px;
+    }
+    .page-intro h2 {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 10px;
+      line-height: 1.2;
+    }
+    .page-intro p {
+      font-size: 17px;
+      color: var(--gray-meta);
+      line-height: 1.65;
+    }
+
+    /* ============================================================
+       DESTINATION CARDS — two large side-by-side tiles
+       ============================================================ */
+    .cards-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      width: 100%;
+      max-width: 1200px;
+    }
+
+    .dest-card {
+      background-color: var(--white);
+      border: 1px solid var(--gray-divider);
+      border-top: 5px solid var(--gold);
+      border-radius: 6px;
+      padding: 44px 40px 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      text-decoration: none;
+      color: var(--gray-body);
+      box-shadow: 0 3px 14px rgba(0,0,0,0.08);
+      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.22s, background-color 0.22s;
+      cursor: pointer;
+      min-height: 380px;
+    }
+
+    .dest-card:hover,
+    .dest-card:focus {
+      box-shadow: 0 10px 36px rgba(13,35,71,0.18);
+      transform: translateY(-5px);
+      border-top-color: var(--gold-lt);
+      background-color: var(--gold-pale);
+      outline: none;
+    }
+    .dest-card:active { transform: translateY(-2px); }
+
+    /* Logo area — top section of card */
+    .card-logo-area {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 130px;
+      margin-bottom: 24px;
+      flex-shrink: 0;
+    }
+    .card-logo-area img {
+      max-height: 110px;
+      max-width: 240px;
+      width: auto;
+      object-fit: contain;
+      /* Subtle drop shadow on logos */
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.12));
+    }
+
+    /* Icon fallback for card-logo-area if no image */
+    .card-icon-tile {
+      width: 86px;
+      height: 86px;
+      background: linear-gradient(145deg, var(--gold-lt), var(--gold));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 3px 10px rgba(184,150,46,0.35);
+    }
+    .card-icon-tile i { font-size: 38px; color: var(--white); }
+
+    /* Thin rule between logo and text */
+    .card-divider {
+      width: 56px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--gold), var(--gold-lt));
+      border-radius: 2px;
+      margin-bottom: 22px;
+      flex-shrink: 0;
+    }
+
+    .card-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1.3;
+      margin-bottom: 10px;
+    }
+    .dest-card:hover .card-title { color: var(--navy-mid); }
+
+    .card-desc {
+      font-size: 16px;
+      color: var(--gray-meta);
+      line-height: 1.6;
+      margin-bottom: 28px;
+      flex: 1;
+    }
+
+    /* CTA row at bottom of card */
+    .card-cta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gold);
+      padding-top: 4px;
+      border-top: 1px solid var(--gray-divider);
+      padding-top: 18px;
+      width: 100%;
+      justify-content: center;
+      transition: gap 0.18s;
+    }
+    .dest-card:hover .card-cta {
+      color: var(--gold);
+      gap: 12px;
+    }
+    .card-cta i { font-size: 13px; }
+
+    /* ============================================================
+       FOOTER
+       Deep navy — mirrors the header for a bookended look.
+       Standard city legal links centered.
+       ============================================================ */
+    .site-footer {
+      background-color: var(--navy);
+      color: rgba(255,255,255,0.65);
+      border-top: 4px solid var(--gold);
+      padding: 24px 48px;
+      flex-shrink: 0;
+    }
+
+    .footer-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .footer-left img {
+      height: 36px;
+      width: auto;
+      object-fit: contain;
+      opacity: 0.75;
+    }
+    .footer-location-text {
+      font-size: 13px;
+      line-height: 1.7;
+      color: rgba(255,255,255,0.65);
+    }
+    .footer-location-text strong { color: rgba(255,255,255,0.88); font-size: 14px; }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .footer-links a {
+      color: rgba(255,255,255,0.52);
+      transition: color 0.18s;
+    }
+    .footer-links a:hover { color: var(--white); }
+    .footer-links .sep { color: rgba(255,255,255,0.22); }
+    .footer-copyright {
+      font-size: 12px;
+      color: rgba(255,255,255,0.35);
+      margin-top: 10px;
+      width: 100%;
+      text-align: right;
+    }
+
+    /* ============================================================
+       ANIMATIONS
+       ============================================================ */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .page-intro  { animation: fadeUp 0.45s ease-out both; }
+    .dest-card:nth-child(1) { animation: fadeUp 0.45s 0.10s ease-out both; }
+    .dest-card:nth-child(2) { animation: fadeUp 0.45s 0.18s ease-out both; }
+
+    /* ============================================================
+       RESPONSIVE — scale for different monitor resolutions
+       ============================================================ */
+    @media (max-width: 1366px) {
+      .site-header          { padding: 0 40px; min-height: 86px; }
+      .header-logo-wrap img { height: 54px; }
+      .header-title-wrap h1 { font-size: 24px; }
+      .main-content         { padding: 40px 48px; }
+      .dest-card            { padding: 36px 32px 32px; min-height: 340px; }
+      .card-title           { font-size: 22px; }
+      .card-desc            { font-size: 15px; }
+      .cards-row            { gap: 28px; }
+    }
+
+    @media (max-width: 1024px) {
+      .cards-row { grid-template-columns: 1fr; max-width: 600px; }
+      .dest-card { min-height: 280px; }
+      .main-content::before { width: 480px; height: 480px; }
+    }
+
+    @media (max-width: 768px) {
+      .site-header { padding: 0 24px; }
+      .header-badge-wrap { display: none; }
+      .main-content { padding: 32px 24px; }
+      .cards-row { gap: 20px; }
+    }
+
+    @media print {
+      .site-header, .site-footer {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- START: Idle Overlay -->
+  <div id="idle-overlay" role="alertdialog" aria-modal="true" aria-labelledby="idle-heading">
+    <div id="idle-box">
+      <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+      <h2 id="idle-heading">Still there?</h2>
+      <p>This kiosk will return to the home screen in</p>
+      <div id="idle-countdown" aria-live="polite">30</div>
+      <button id="idle-stay" onclick="cancelIdle()">I'm Still Here</button>
+    </div>
+  </div>
+  <!-- STOP: Idle Overlay -->
+
+  <!-- START: Offline Banner -->
+  <div id="offline-banner" role="alert" aria-live="assertive">
+    <i class="fa-solid fa-wifi-slash" aria-hidden="true"></i>&nbsp;
+    Network connection lost — please see staff for assistance
+  </div>
+  <!-- STOP: Offline Banner -->
+
+
+  <!-- START: Site Header -->
+  <!--
+    Deep navy — law enforcement palette.
+    Gold bottom stripe ties to badge theme.
+    Left: City of Minneapolis white logo.
+    Center: Kiosk title.
+    Right: MPD badge image (decorative, graceful fallback if missing).
+  -->
+  <header class="site-header" role="banner">
+
+    <div class="header-logo-wrap">
+      <img src="whitelogo.png" alt="City of Minneapolis — City of Lakes">
+    </div>
+
+    <div class="header-title-wrap">
+      <h1>MPD Records Unit</h1>
+      <p>Minneapolis Police Department &nbsp;·&nbsp; City of Minneapolis</p>
+    </div>
+
+    <div class="header-badge-wrap">
+      <img src="mpdbadge.png"
+           alt="Minneapolis Police Department"
+           class="header-badge-img"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+      <div class="header-badge-fallback" aria-hidden="true">
+        <i class="fa-solid fa-shield-halved"></i>
+      </div>
+    </div>
+
+  </header>
+  <!-- STOP: Site Header -->
+
+
+  <!-- START: Main Content -->
+  <!--
+    MPD badge rendered as a low-opacity watermark via CSS ::before on .main-content.
+    File reference: mpdbadge.png — place in same directory as this HTML file.
+  -->
+  <main class="main-content" role="main">
+
+    <!-- START: Page Intro -->
+    <div class="page-intro">
+      <h2>Minneapolis Police Department — Records Unit</h2>
+      <p>
+        Select a service below to submit your request online.
+        For in-person assistance, please speak with staff at the Records counter.
+      </p>
+    </div>
+    <!-- STOP: Page Intro -->
+
+    <!-- START: Destination Cards -->
+    <div class="cards-row">
+
+      <!-- START: Card 1 — Request Public Data -->
+      <!--
+        Logo: Minneapolis City of Lakes sailboat logo (color version)
+        File reference: colorlogo.png — or substitute whitelogo.png with a dark bg tile
+      -->
+      <a href="https://www.minneapolismn.gov/government/government-data/request-public-data/"
+         class="dest-card"
+         target="_blank"
+         rel="noopener"
+         aria-label="Request public data from the City of Minneapolis">
+
+        <!-- Logo area — city logo on white card -->
+        <div class="card-logo-area">
+          <img src="colorlogo.png"
+               alt="City of Minneapolis"
+               onerror="this.style.display='none'; this.closest('.card-logo-area').innerHTML='<div class=\'card-icon-tile\'><i class=\'fa-solid fa-folder-open\'></i></div>';">
+        </div>
+
+        <div class="card-divider" aria-hidden="true"></div>
+
+        <span class="card-title">Request Public Data</span>
+
+        <p class="card-desc">
+          Submit a request to access public government data, records, and documents
+          from the City of Minneapolis.
+        </p>
+
+        <div class="card-cta" aria-hidden="true">
+          Open Request Form
+          <i class="fa-solid fa-arrow-right"></i>
+        </div>
+
+      </a>
+      <!-- STOP: Card 1 -->
+
+      <!-- START: Card 2 — Victim Services Portal -->
+      <!--
+        Logo: Minnesota Department of Public Safety badge
+        File reference: dpslogo.png — save the uploaded MN DPS image with this filename
+      -->
+      <a href="https://svcportal.dps.mn.gov/vsp/account/login"
+         class="dest-card"
+         target="_blank"
+         rel="noopener"
+         aria-label="Victim Services Portal — powered by ClaimsAssistant">
+
+        <!-- Logo area — MN DPS logo -->
+        <div class="card-logo-area">
+          <img src="dpslogo.png"
+               alt="Minnesota Department of Public Safety"
+               onerror="this.style.display='none'; this.closest('.card-logo-area').innerHTML='<div class=\'card-icon-tile\'><i class=\'fa-solid fa-scale-balanced\'></i></div>';">
+        </div>
+
+        <div class="card-divider" aria-hidden="true"></div>
+
+        <span class="card-title">Victim Services Portal</span>
+
+        <p class="card-desc">
+          Access the Minnesota Victim Services Portal, powered by ClaimsAssistant,
+          to submit and track victim-related service requests.
+        </p>
+
+        <div class="card-cta" aria-hidden="true">
+          Open Victim Services Portal
+          <i class="fa-solid fa-arrow-right"></i>
+        </div>
+
+      </a>
+      <!-- STOP: Card 2 -->
+
+    </div>
+    <!-- STOP: Destination Cards -->
+
+  </main>
+  <!-- STOP: Main Content -->
+
+
+  <!-- START: Footer -->
+  <!--
+    Deep navy — bookends the header.
+    Gold top accent stripe.
+    Left: logo + Records Unit address.
+    Right: standard city legal links.
+  -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="footer-inner">
+
+      <div class="footer-left">
+        <img src="whitelogo.png" alt="City of Minneapolis">
+        <div class="footer-location-text">
+          <strong>Minneapolis Police Department — Records Unit</strong><br>
+          350 South 5th Street, Room 130, Minneapolis, MN 55415<br>
+          <span>For assistance, speak with staff at the Records counter</span>
+        </div>
+      </div>
+
+      <nav class="footer-links" aria-label="Footer links">
+        <a href="https://www.minneapolismn.gov/footer-content/privacy-policy/"
+           target="_blank" rel="noopener">Privacy Policy</a>
+        <span class="sep" aria-hidden="true">|</span>
+        <a href="https://www.minneapolismn.gov/footer-content/terms-of-use/"
+           target="_blank" rel="noopener">Terms of Use</a>
+        <span class="sep" aria-hidden="true">|</span>
+        <a href="https://www.minneapolismn.gov/footer-content/website-accessibility/"
+           target="_blank" rel="noopener">Accessibility</a>
+      </nav>
+
+      <p class="footer-copyright">© 2026 City of Minneapolis</p>
+
+    </div>
+  </footer>
+  <!-- STOP: Footer -->
+
+
+  <!-- ============================================================
+       SELF-HEALING SCRIPTS
+       1. Inactivity timer   — idle → warning overlay → hard reload
+       2. Page visibility    — screen-wake resets idle clock
+       3. Network watchdog   — offline banner + auto-reload on reconnect
+       4. Periodic health    — background HEAD ping; reload on failure
+       5. Interaction blocks — prevent context menu & text selection
+       ============================================================ -->
+  <script>
+    /* ── 1. INACTIVITY TIMER ─────────────────────────────────────── */
+    let idleWarnTimer, idleReloadTimer, countdownInterval, countdownVal = 30;
+
+    function startIdleTimers() {
+      idleWarnTimer = setTimeout(showIdleWarning, IDLE_WARN_MS);
+    }
+
+    function resetIdleTimers() {
+      clearTimeout(idleWarnTimer); clearTimeout(idleReloadTimer); clearInterval(countdownInterval);
+      hideIdleWarning(); startIdleTimers();
+    }
+
+    function showIdleWarning() {
+      countdownVal = Math.round((IDLE_RELOAD_MS - IDLE_WARN_MS) / 1000);
+      document.getElementById('idle-countdown').textContent = countdownVal;
+      document.getElementById('idle-overlay').classList.add('visible');
+      countdownInterval = setInterval(function() {
+        countdownVal--;
+        document.getElementById('idle-countdown').textContent = countdownVal;
+        if (countdownVal <= 0) { clearInterval(countdownInterval); window.location.href = KIOSK_HOME_URL; }
+      }, 1000);
+      idleReloadTimer = setTimeout(function() {
+        window.location.href = KIOSK_HOME_URL;
+      }, IDLE_RELOAD_MS - IDLE_WARN_MS + 1000);
+    }
+
+    function hideIdleWarning() {
+      document.getElementById('idle-overlay').classList.remove('visible');
+      clearInterval(countdownInterval);
+    }
+
+    function cancelIdle() { resetIdleTimers(); }
+
+    ['click','touchstart','touchend','keydown','mousemove','scroll'].forEach(function(e) {
+      document.addEventListener(e, resetIdleTimers, { passive: true });
+    });
+
+    startIdleTimers();
+
+
+    /* ── 2. PAGE VISIBILITY ──────────────────────────────────────── */
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') { resetIdleTimers(); }
+    });
+
+
+    /* ── 3. NETWORK WATCHDOG ─────────────────────────────────────── */
+    var offlineBanner = document.getElementById('offline-banner');
+
+    window.addEventListener('offline', function() { offlineBanner.classList.add('visible'); });
+    window.addEventListener('online', function() {
+      offlineBanner.classList.remove('visible');
+      setTimeout(function() { window.location.href = KIOSK_HOME_URL; }, 2000);
+    });
+
+    if (!navigator.onLine) { offlineBanner.classList.add('visible'); }
+
+
+    /* ── 4. PERIODIC HEALTH CHECK ────────────────────────────────── */
+    setInterval(function() {
+      fetch(HEALTH_CHECK_URL, { method: 'HEAD', cache: 'no-store' })
+        .then(function(r) { if (!r.ok) throw new Error(); offlineBanner.classList.remove('visible'); })
+        .catch(function() { offlineBanner.classList.add('visible'); });
+    }, HEALTH_CHECK_MS);
+
+
+    /* ── 5. INTERACTION BLOCKS ───────────────────────────────────── */
+    document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+    document.addEventListener('selectstart',  function(e) { e.preventDefault(); });
+  </script>
+
+</body>
+</html>
