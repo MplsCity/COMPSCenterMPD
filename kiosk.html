@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MPD Records Unit — City of Minneapolis</title>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <!-- ============================================================
+       SELF-HEALING CONFIGURATION
+       Adjust timing constants here only — do not edit script logic.
+       ============================================================ -->
+  <script>
+    const KIOSK_HOME_URL   = 'index.html';  // ← returns to MPD splash screen
+    const IDLE_WARN_MS     = 840000;        // 14 min  → show 60-second warning overlay
+    const IDLE_RELOAD_MS   = 900000;        // 15 min  → redirect back to index.html
+    const HEALTH_CHECK_MS  = 60000;         // 1 min   → periodic connectivity ping
+    const HEALTH_CHECK_URL = 'https://www.minneapolismn.gov/';
+  </script>
+
+  <style>
+    /* ============================================================
+       BRAND TOKENS — MPD / City of Minneapolis
+       ============================================================ */
+    :root {
+      /* MPD law enforcement palette */
+      --navy:           #0d2347;   /* deep midnight navy — header, footer      */
+      --navy-mid:       #152d5a;   /* mid navy                                 */
+      --mpd-panel:      #38506C;   /* steel blue — matches splash              */
+      --gold:           #b8962e;   /* badge gold — card tops, accents, CTAs    */
+      --gold-lt:        #d4ae45;   /* lighter gold — hover, gradient           */
+      --gold-pale:      #fdf6e3;   /* very pale gold — card hover bg           */
+
+      /* City of Minneapolis base */
+      --blue-link:      #1a6faf;
+      --gray-utility:   #2d2d2d;
+      --gray-divider:   #d0ccc8;
+      --gray-section:   #eceff1;
+      --gray-body:      #4a4a4a;
+      --gray-meta:      #717171;
+      --white:          #ffffff;
+      --font-ui: 'Myriad Pro', Calibri, 'Trebuchet MS', Arial, sans-serif;
+    }
+
+    /* ============================================================
+       RESET & BASE
+       ============================================================ */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-ui);
+      color: var(--gray-body);
+      background-color: var(--white);
+      -webkit-user-select: none;
+      user-select: none;
+      -ms-touch-action: manipulation;
+      touch-action: manipulation;
+      overflow-x: hidden;
+      overflow-y: auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+    /* ============================================================
+       IDLE WARNING OVERLAY — gold accent, navy palette
+       ============================================================ */
+    #idle-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75); z-index: 9999;
+      align-items: center; justify-content: center;
+    }
+    #idle-overlay.visible { display: flex; }
+    #idle-box {
+      background: var(--white); border-radius: 14px; padding: 52px 60px;
+      text-align: center; max-width: 520px; width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      border-top: 5px solid var(--gold);
+    }
+    #idle-box i     { font-size: 56px; color: var(--gold); display: block; margin-bottom: 20px; }
+    #idle-box h2    { font-size: 28px; color: var(--navy); margin-bottom: 10px; }
+    #idle-box p     { font-size: 17px; color: var(--gray-meta); line-height: 1.55; margin-bottom: 24px; }
+    #idle-countdown { font-size: 60px; font-weight: 700; color: var(--navy); line-height: 1; margin-bottom: 28px; }
+    #idle-stay {
+      background-color: var(--navy); color: var(--white); border: none;
+      padding: 16px 44px; border-radius: 6px; font-size: 20px;
+      font-family: var(--font-ui); font-weight: 600; cursor: pointer;
+      transition: background-color 0.18s;
+    }
+    #idle-stay:hover { background-color: var(--navy-mid); }
+
+    /* ============================================================
+       OFFLINE BANNER
+       ============================================================ */
+    #offline-banner {
+      display: none; position: fixed; top: 0; left: 0; right: 0;
+      background-color: #c0392b; color: var(--white); text-align: center;
+      padding: 13px 20px; font-size: 16px; font-weight: 600;
+      z-index: 9998; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }
+    #offline-banner.visible { display: block; }
+
+    /* ============================================================
+       SITE HEADER — deep navy + gold bottom stripe
+       Mirrors doc 9 header structure exactly.
+       Left: City of Minneapolis white logo (institutional anchor).
+       Center: Kiosk title + subtitle.
+       Right: MPD badge logo.
+       ============================================================ */
+    .site-header {
+      background-color: var(--navy);
+      display: flex;
+      align-items: center;
+      padding: 0 32px;
+      gap: 28px;
+      min-height: 90px;
+      flex-shrink: 0;
+      border-bottom: 4px solid var(--gold);
+      box-shadow: 0 3px 16px rgba(0,0,0,0.30);
+    }
+
+    .header-logo-wrap {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding-right: 28px;
+      border-right: 1px solid rgba(255,255,255,0.18);
+    }
+    .header-logo-wrap img { height: 58px; width: auto; object-fit: contain; }
+
+    .header-title-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .header-title-wrap h1 {
+      color: var(--white);
+      font-size: 26px;
+      font-weight: 600;
+      line-height: 1.2;
+      margin-bottom: 3px;
+    }
+    .header-title-wrap p {
+      color: rgba(255,255,255,0.70);
+      font-size: 15px;
+      font-weight: 400;
+    }
+
+    /* MPD badge — right side of header */
+    .header-badge-wrap {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding-left: 28px;
+      border-left: 1px solid rgba(255,255,255,0.18);
+    }
+    .header-badge-wrap img {
+      height: 62px;
+      width: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.30));
+    }
+
+    /* ============================================================
+       PAGE HERO — white section, mirrors doc 9 structure exactly
+       ============================================================ */
+    .page-hero {
+      background-color: var(--white);
+      padding: 36px 0 28px;
+      border-bottom: 1px solid var(--gray-divider);
+    }
+    .page-hero-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 32px;
+    }
+    .page-hero-inner h2 {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 10px;
+      line-height: 1.2;
+    }
+    .page-hero-inner > p {
+      font-size: 17px;
+      color: var(--gray-meta);
+      line-height: 1.6;
+      max-width: 700px;
+    }
+
+    /* ============================================================
+       RESOURCES SECTION — mirrors doc 9 .resources-section exactly.
+       Gold watermark badge in background.
+       ============================================================ */
+    .resources-section {
+      background-color: var(--gray-section);
+      padding: 36px 0 40px;
+      border-top: 1px solid var(--gray-divider);
+      border-bottom: 1px solid var(--gray-divider);
+      position: relative;
+      overflow: hidden;
+      flex: 1;
+    }
+
+    /* MPD badge watermark behind the cards */
+    .resources-section::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 560px;
+      height: 560px;
+      background-image: url('MPDlogo.jpg');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      opacity: 0.05;
+      pointer-events: none;
+    }
+
+    .resources-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-heading {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 24px;
+    }
+
+    /* 2-column grid — two large destination cards side by side */
+    .resource-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 28px;
+    }
+
+    /* ============================================================
+       RESOURCE CARDS — same class names as doc 9, MPD styling.
+       card-title: 22px  (matches updated PSC)
+       card-desc:  16px  (matches updated PSC)
+       Gold top border instead of blue.
+       ============================================================ */
+    .resource-card {
+      background-color: var(--white);
+      border: 1px solid var(--gray-divider);
+      border-top: 5px solid var(--gold);
+      border-radius: 4px;
+      padding: 40px 36px 36px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      text-decoration: none;
+      color: var(--gray-body);
+      box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+      transition: box-shadow 0.22s ease, transform 0.22s ease,
+                  border-color 0.22s, background-color 0.22s;
+      cursor: pointer;
+      min-height: 380px;
+    }
+    .resource-card:hover,
+    .resource-card:focus {
+      box-shadow: 0 10px 36px rgba(13,35,71,0.18);
+      transform: translateY(-4px);
+      border-top-color: var(--gold-lt);
+      background-color: var(--gold-pale);
+      outline: none;
+    }
+    .resource-card:active { transform: translateY(-2px); }
+
+    /* Logo area — prominent, top of card */
+    .card-logo-area {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 130px;
+      margin-bottom: 22px;
+      flex-shrink: 0;
+    }
+    .card-logo-area img {
+      max-height: 110px;
+      max-width: 260px;
+      width: auto;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.14));
+    }
+
+    /* Icon tile fallback if logo image is missing */
+    .card-icon-tile {
+      width: 86px;
+      height: 86px;
+      background: linear-gradient(145deg, var(--gold-lt), var(--gold));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 3px 10px rgba(184,150,46,0.35);
+    }
+    .card-icon-tile i { font-size: 38px; color: var(--white); }
+
+    /* Thin gold rule between logo and text */
+    .card-divider {
+      width: 56px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--gold), var(--gold-lt));
+      border-radius: 2px;
+      margin-bottom: 20px;
+      flex-shrink: 0;
+    }
+
+    /* card-title: 22px — same as updated PSC kiosk */
+    .card-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1.3;
+      margin-bottom: 10px;
+    }
+    .resource-card:hover .card-title { color: var(--navy-mid); }
+
+    /* card-desc: 16px — same as updated PSC kiosk */
+    .card-desc {
+      font-size: 16px;
+      color: var(--gray-body);
+      line-height: 1.6;
+      margin-bottom: 28px;
+      flex: 1;
+    }
+
+    /* CTA row — gold, bottom of card */
+    .card-cta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gold);
+      border-top: 1px solid var(--gray-divider);
+      padding-top: 18px;
+      width: 100%;
+      justify-content: center;
+      transition: gap 0.18s;
+    }
+    .resource-card:hover .card-cta { gap: 14px; }
+    .card-cta i { font-size: 13px; }
+
+    /* ============================================================
+       FOOTER — deep navy, mirrors header palette.
+       Same structure as doc 9 footer.
+       ============================================================ */
+    .site-footer {
+      background-color: var(--navy);
+      color: rgba(255,255,255,0.70);
+      border-top: 4px solid var(--gold);
+      padding: 24px 32px;
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    .footer-location { margin-bottom: 16px; }
+    .footer-logo-wrap { margin-bottom: 14px; }
+    .footer-logo-wrap img { height: 44px; width: auto; object-fit: contain; opacity: 0.80; }
+    .footer-location h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 8px;
+    }
+    .footer-location p {
+      font-size: 14px;
+      line-height: 1.8;
+      color: rgba(255,255,255,0.75);
+    }
+    .footer-location p strong { color: var(--white); }
+
+    .footer-rule {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      width: 320px;
+      margin: 14px auto;
+    }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .footer-links a {
+      color: rgba(255,255,255,0.55);
+      font-size: 13px;
+      transition: color 0.18s;
+    }
+    .footer-links a:hover { color: var(--white); text-decoration: underline; }
+    .footer-links .sep { color: rgba(255,255,255,0.22); font-size: 13px; }
+    .footer-copyright { font-size: 12px; color: rgba(255,255,255,0.35); }
+
+    /* ============================================================
+       ANIMATIONS — identical to doc 9
+       ============================================================ */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .page-hero { animation: fadeUp 0.4s ease-out both; }
+    .resource-card:nth-child(1) { animation: fadeUp 0.35s 0.10s ease-out both; }
+    .resource-card:nth-child(2) { animation: fadeUp 0.35s 0.18s ease-out both; }
+
+    /* ============================================================
+       RESPONSIVE — mirrors doc 9 breakpoints
+       ============================================================ */
+    @media (max-width: 1366px) {
+      .site-header          { min-height: 78px; }
+      .header-logo-wrap img { height: 48px; }
+      .header-title-wrap h1 { font-size: 22px; }
+      .page-hero-inner h2   { font-size: 30px; }
+      .resource-grid        { gap: 22px; }
+      .resource-card        { padding: 32px 28px 28px; min-height: 340px; }
+      .card-title           { font-size: 20px; }
+      .card-desc            { font-size: 15px; }
+      .header-badge-wrap img { height: 52px; }
+    }
+    @media (max-width: 1024px) {
+      .resource-grid { grid-template-columns: 1fr; max-width: 600px; margin: 0 auto; }
+    }
+    @media (max-width: 768px) {
+      .site-header          { padding: 0 20px; }
+      .header-badge-wrap    { display: none; }
+      .resources-inner      { padding: 0 20px; }
+      .page-hero-inner      { padding: 0 20px; }
+    }
+    @media print {
+      .site-header, .site-footer {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- START: Idle Overlay -->
+  <div id="idle-overlay" role="alertdialog" aria-modal="true" aria-labelledby="idle-heading">
+    <div id="idle-box">
+      <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+      <h2 id="idle-heading">Still there?</h2>
+      <p>This kiosk will return to the home screen in</p>
+      <div id="idle-countdown" aria-live="polite">60</div>
+      <button id="idle-stay" onclick="cancelIdle()">I'm Still Here</button>
+    </div>
+  </div>
+  <!-- STOP: Idle Overlay -->
+
+  <!-- START: Offline Banner -->
+  <div id="offline-banner" role="alert" aria-live="assertive">
+    <i class="fa-solid fa-wifi-slash" aria-hidden="true"></i>&nbsp;
+    Network connection lost — please see staff for assistance
+  </div>
+  <!-- STOP: Offline Banner -->
+
+
+  <!-- START: Site Header -->
+  <header class="site-header" role="banner">
+
+    <!-- City of Minneapolis white logo — institutional left anchor -->
+    <div class="header-logo-wrap">
+      <img src="whitelogo.png" alt="City of Minneapolis — City of Lakes">
+    </div>
+
+    <!-- Kiosk title -->
+    <div class="header-title-wrap">
+      <h1>MPD Records Unit</h1>
+      <p>Minneapolis Police Department &nbsp;·&nbsp; City of Minneapolis</p>
+    </div>
+
+    <!-- MPD badge — right decoration -->
+    <div class="header-badge-wrap">
+      <img src="MPDlogo.jpg"
+           alt="Minneapolis Police Department"
+           onerror="this.style.display='none';">
+    </div>
+
+  </header>
+  <!-- STOP: Site Header -->
+
+
+  <!-- START: Page Hero -->
+  <section class="page-hero" aria-label="Page introduction">
+    <div class="page-hero-inner">
+      <h2>Minneapolis Police Department — Records Unit</h2>
+      <p>
+        Select a service below to submit your request online.
+        For in-person assistance, please speak with staff at the Records counter.
+      </p>
+    </div>
+  </section>
+  <!-- STOP: Page Hero -->
+
+
+  <!-- START: Resources Section -->
+  <!--
+    Two destination cards — same structural pattern as PSC kiosk grid.
+    Logo areas at top of each card; card-title 22px, card-desc 16px.
+    MPD badge watermark rendered via ::before on .resources-section.
+    File: MPDlogo.jpg — same directory as this HTML.
+  -->
+  <section class="resources-section" aria-label="Available services">
+    <div class="resources-inner">
+      <h2 class="section-heading">I want to&hellip;</h2>
+
+      <div class="resource-grid">
+
+        <!-- START: Card 1 — Request Public Data -->
+        <!--
+          Logo: Minneapolis color logo (sailboat wordmark on white card)
+          File: Minneapolis_logo_color.png
+        -->
+        <a href="https://www.minneapolismn.gov/government/government-data/request-public-data/"
+           class="resource-card"
+           target="_blank"
+           rel="noopener"
+           aria-label="Request public data from the City of Minneapolis">
+
+          <div class="card-logo-area">
+            <img src="Minneapolis_logo_color.png"
+                 alt="City of Minneapolis"
+                 onerror="this.style.display='none';
+                          this.closest('.card-logo-area').innerHTML=
+                          '<div class=\'card-icon-tile\'><i class=\'fa-solid fa-folder-open\'></i></div>';">
+          </div>
+
+          <div class="card-divider" aria-hidden="true"></div>
+
+          <span class="card-title">Request Public Data</span>
+
+          <p class="card-desc">
+            Submit a request to access public government data, records,
+            and documents from the City of Minneapolis.
+          </p>
+
+          <div class="card-cta" aria-hidden="true">
+            Open Request Form
+            <i class="fa-solid fa-arrow-right"></i>
+          </div>
+
+        </a>
+        <!-- STOP: Card 1 -->
+
+        <!-- START: Card 2 — Victim Services Portal -->
+        <!--
+          Logo: MN Department of Public Safety badge
+          File: dpslogo.png — save the MN DPS image with this filename
+        -->
+        <a href="https://svcportal.dps.mn.gov/vsp/account/login"
+           class="resource-card"
+           target="_blank"
+           rel="noopener"
+           aria-label="Victim Services Portal — powered by ClaimsAssistant">
+
+          <div class="card-logo-area">
+            <img src="dpslogo.png"
+                 alt="Minnesota Department of Public Safety"
+                 onerror="this.style.display='none';
+                          this.closest('.card-logo-area').innerHTML=
+                          '<div class=\'card-icon-tile\'><i class=\'fa-solid fa-scale-balanced\'></i></div>';">
+          </div>
+
+          <div class="card-divider" aria-hidden="true"></div>
+
+          <span class="card-title">Victim Services Portal</span>
+
+          <p class="card-desc">
+            Access the Minnesota Victim Services Portal, powered by ClaimsAssistant,
+            to submit and track victim-related service requests.
+          </p>
+
+          <div class="card-cta" aria-hidden="true">
+            Open Victim Services Portal
+            <i class="fa-solid fa-arrow-right"></i>
+          </div>
+
+        </a>
+        <!-- STOP: Card 2 -->
+
+      </div>
+    </div>
+  </section>
+  <!-- STOP: Resources Section -->
+
+
+  <!-- START: Footer -->
+  <!--
+    Deep navy — matches header, bookends the page.
+    Gold top accent stripe mirrors header gold bottom stripe.
+    Same structure as doc 9 footer.
+  -->
+  <footer class="site-footer" role="contentinfo">
+
+    <div class="footer-location">
+      <div class="footer-logo-wrap">
+        <img src="whitelogo.png" alt="City of Minneapolis">
+      </div>
+      <h3>Minneapolis Police Department — Records Unit</h3>
+      <p>
+        <strong>Address:</strong> 350 South 5th Street, Room 130, Minneapolis, MN 55415<br>
+        For in-person assistance, please speak with staff at the Records counter
+      </p>
+    </div>
+
+    <hr class="footer-rule" aria-hidden="true">
+
+    <nav class="footer-links" aria-label="Footer links">
+      <a href="https://www.minneapolismn.gov/footer-content/privacy-policy/"
+         target="_blank" rel="noopener">Privacy Policy</a>
+      <span class="sep" aria-hidden="true">|</span>
+      <a href="https://www.minneapolismn.gov/footer-content/terms-of-use/"
+         target="_blank" rel="noopener">Terms of Use</a>
+      <span class="sep" aria-hidden="true">|</span>
+      <a href="https://www.minneapolismn.gov/footer-content/website-accessibility/"
+         target="_blank" rel="noopener">Accessibility</a>
+    </nav>
+
+    <p class="footer-copyright">© 2026 City of Minneapolis</p>
+
+  </footer>
+  <!-- STOP: Footer -->
+
+
+  <!-- ============================================================
+       SELF-HEALING SCRIPTS
+       1. Inactivity timer   — idle → warning overlay → redirect to index.html
+       2. Page visibility    — screen-wake resets idle clock
+       3. Network watchdog   — offline banner + auto-reload on reconnect
+       4. Periodic health    — background HEAD ping; shows offline banner on fail
+       5. Interaction blocks — prevent context menu & text selection
+       ============================================================ -->
+  <script>
+    /* ── 1. INACTIVITY TIMER ─────────────────────────────────────── */
+    let idleWarnTimer, idleReloadTimer, countdownInterval, countdownVal = 60;
+
+    function startIdleTimers() {
+      idleWarnTimer = setTimeout(showIdleWarning, IDLE_WARN_MS);
+    }
+
+    function resetIdleTimers() {
+      clearTimeout(idleWarnTimer);
+      clearTimeout(idleReloadTimer);
+      clearInterval(countdownInterval);
+      hideIdleWarning();
+      startIdleTimers();
+    }
+
+    function showIdleWarning() {
+      countdownVal = Math.round((IDLE_RELOAD_MS - IDLE_WARN_MS) / 1000);
+      document.getElementById('idle-countdown').textContent = countdownVal;
+      document.getElementById('idle-overlay').classList.add('visible');
+      countdownInterval = setInterval(function() {
+        countdownVal--;
+        document.getElementById('idle-countdown').textContent = countdownVal;
+        if (countdownVal <= 0) {
+          clearInterval(countdownInterval);
+          window.location.href = KIOSK_HOME_URL;
+        }
+      }, 1000);
+      idleReloadTimer = setTimeout(function() {
+        window.location.href = KIOSK_HOME_URL;
+      }, IDLE_RELOAD_MS - IDLE_WARN_MS + 1000);
+    }
+
+    function hideIdleWarning() {
+      document.getElementById('idle-overlay').classList.remove('visible');
+      clearInterval(countdownInterval);
+    }
+
+    function cancelIdle() { resetIdleTimers(); }
+
+    ['click','touchstart','touchend','keydown','mousemove','scroll'].forEach(function(e) {
+      document.addEventListener(e, resetIdleTimers, { passive: true });
+    });
+
+    startIdleTimers();
+
+
+    /* ── 2. PAGE VISIBILITY ──────────────────────────────────────── */
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') { resetIdleTimers(); }
+    });
+
+
+    /* ── 3. NETWORK WATCHDOG ─────────────────────────────────────── */
+    var offlineBanner = document.getElementById('offline-banner');
+
+    window.addEventListener('offline', function() { offlineBanner.classList.add('visible'); });
+    window.addEventListener('online', function() {
+      offlineBanner.classList.remove('visible');
+      setTimeout(function() { window.location.href = KIOSK_HOME_URL; }, 2000);
+    });
+
+    if (!navigator.onLine) { offlineBanner.classList.add('visible'); }
+
+
+    /* ── 4. PERIODIC HEALTH CHECK ────────────────────────────────── */
+    setInterval(function() {
+      fetch(HEALTH_CHECK_URL, { method: 'HEAD', cache: 'no-store' })
+        .then(function(r) {
+          if (!r.ok) throw new Error();
+          offlineBanner.classList.remove('visible');
+        })
+        .catch(function() { offlineBanner.classList.add('visible'); });
+    }, HEALTH_CHECK_MS);
+
+
+    /* ── 5. INTERACTION BLOCKS ───────────────────────────────────── */
+    document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+    document.addEventListener('selectstart',  function(e) { e.preventDefault(); });
+  </script>
+
+</body>
+</html>
